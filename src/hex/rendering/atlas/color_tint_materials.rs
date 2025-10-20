@@ -4,7 +4,7 @@ use bevy::color::palettes::tailwind::{CYAN_300, YELLOW_300};
 use bevy::prelude::*;
 use std::collections::HashMap;
 
-#[derive(Resource)]
+#[derive(Resource, Clone)]
 pub struct ColorTintMaterials {
     pub materials: HashMap<String, Handle<ColorMaterial>>,
     pub hex_mesh: Handle<Mesh>,

@@ -3,7 +3,7 @@ use crate::hex::HexConfig;
 use bevy::prelude::*;
 
 /// Setup des matériaux de biomes (APRÈS HexConfig)
-pub fn setup_biome_materials(
+pub fn setup_materials(
     mut commands: Commands,
     meshes: ResMut<Assets<Mesh>>,
     materials: ResMut<Assets<ColorMaterial>>,
