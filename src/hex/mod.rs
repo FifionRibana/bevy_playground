@@ -1,5 +1,5 @@
 pub mod components;
-// pub mod input;
+pub mod input;
 pub mod rendering;
 
 pub use components::*;

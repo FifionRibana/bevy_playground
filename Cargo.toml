@@ -11,35 +11,30 @@ path = "src/main.rs"
 # path = "src/main.rs"
 
 [dependencies]
-bevy = { version = "0.17.2", default-features = true, features = [
-    "bevy_dev_tools"
+bevy = { version = "0.17.2", default-features = false, features = [
+    "bevy_color",
+    "bevy_core_pipeline",
+    "bevy_gizmos",
+    "bevy_input_focus",
+    "bevy_mesh",
+    "bevy_mesh_picking_backend",
+    "bevy_log",
+    "bevy_picking",
+    "bevy_render",
+    "bevy_sprite",
+    "bevy_sprite_render",
+    "bevy_sprite_picking_backend",
+    "bevy_text",
+    "bevy_ui",
+    "bevy_ui_picking_backend",
+    "bevy_ui_render",
+    "bevy_winit",
+    "bevy_dev_tools",
+    "std",
+    "multi_threaded",
+    "default_font",
+    "png",
 ] }
-# bevy = { version = "0.17.2", default-features = true, features = [
-#     "bevy_color",
-#     "bevy_core_pipeline",
-#     "bevy_gizmos",
-#     "bevy_input_focus",
-#     "bevy_mesh",
-#     "bevy_mesh_picking_backend",
-#     "bevy_log",
-#     "bevy_pbr",
-#     "bevy_picking",
-#     "bevy_render",
-#     "bevy_scene",
-#     "bevy_sprite",
-#     "bevy_sprite_render",
-#     "bevy_sprite_picking_backend",
-#     "bevy_text",
-#     "bevy_ui",
-#     "bevy_ui_picking_backend",
-#     "bevy_ui_render",
-#     "bevy_winit",
-#     "bevy_dev_tools",
-#     "std",
-#     "multi_threaded",
-#     "default_font",
-#     "png",
-# ] }
 
 hexx = { version = "0.22", features = ["bevy"] }
 

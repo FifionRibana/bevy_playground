@@ -10,15 +10,11 @@ impl Plugin for HexRenderingPlugin {
         app.add_systems(
             Startup,
             (
-                systems::setup_camera,
                 systems::setup_hex_config,
                 atlas::systems::setup_materials,
                 systems::spawn_hex_sprites,
             )
                 .chain(),
-        ).add_systems(Update, systems::spawn_on_click);
-        // .add_systems(Update, systems::handle_input);
-        // .add_systems(Update, (systems::check_pickable,).chain());
-        // .add_systems(Update, (systems::spawn_hex_sprites,).chain());
+        );
     }
 }
