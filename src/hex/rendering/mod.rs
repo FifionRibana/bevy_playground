@@ -6,4 +6,4 @@ pub mod plugin;
 pub mod systems;
 
 pub use plugin::HexRenderingPlugin;
-pub use systems::spawn_hex_sprite;
+pub use systems::{spawn_hex_sprite, spawn_hex_chunk};

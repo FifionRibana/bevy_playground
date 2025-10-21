@@ -34,7 +34,7 @@ fn main() {
             camera::CameraPlugin,
             hex::rendering::HexRenderingPlugin,
             hex::input::HexInputPlugin,
-            // ui::UiPlugin,
+            ui::UiPlugin,
         ))
         .add_plugins((
             FrameTimeDiagnosticsPlugin::default(),

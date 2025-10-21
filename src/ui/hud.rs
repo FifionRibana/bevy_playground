@@ -28,6 +28,10 @@ pub fn setup_hud(mut commands: Commands) {
                 ..default()
             },
             BackgroundColor(Color::NONE),
+            Pickable {
+                should_block_lower: false,
+                is_hoverable: false,
+            },
         ))
         .with_children(|parent| {
             // Top-left: FPS
@@ -46,6 +50,10 @@ pub fn setup_hud(mut commands: Commands) {
                         ..default()
                     },
                     FpsText,
+                    Pickable {
+                        should_block_lower: false,
+                        is_hoverable: false,
+                    },
                 ))
                 .observe(|over: On<Pointer<Over>>| {
                     println!("oveerd");
@@ -65,6 +73,10 @@ pub fn setup_hud(mut commands: Commands) {
                     ..default()
                 },
                 FrameTimeText,
+                Pickable {
+                    should_block_lower: false,
+                    is_hoverable: false,
+                },
             ));
 
             parent.spawn((
@@ -81,6 +93,10 @@ pub fn setup_hud(mut commands: Commands) {
                     ..default()
                 },
                 EntityCountText,
+                Pickable {
+                    should_block_lower: false,
+                    is_hoverable: false,
+                },
             ));
         });
 }

@@ -47,3 +47,47 @@ pub fn spawn_on_click(
     }
     Ok(())
 }
+
+pub fn spawn_chunk_on_click(
+    mut commands: Commands,
+    mouse_input: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    cameras: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
+    hex_config: Res<HexConfig>,
+    color_tint_materials: Res<ColorTintMaterials>,
+    existing: Query<&HexTile>,
+) -> Result {
+    if !mouse_input.just_pressed(MouseButton::Left) {
+        return Ok(());
+    }
+
+    let existing_coords: std::collections::HashSet<_> = existing.iter().map(|h| h.coord).collect();
+
+    let window = windows.single()?;
+    let (camera, camera_transform) = cameras.single()?;
+    if let Some(position) = window
+        .cursor_position()
+        .and_then(|p| camera.viewport_to_world_2d(camera_transform, p).ok())
+    {
+        info!("Position: {}", position);
+        let clicked_hex = hex_config.layout.world_pos_to_hex(position);
+        let hex_coord = HexCoord::from_hex(clicked_hex);
+
+        info!("Clicked on: {:?}", hex_coord);
+        // let world_pos = hex_config.chunk_layout.hex_to_world_pos(chunk_hex_position);
+
+        if existing_coords.contains(&hex_coord) {
+            warn!("Coord {:?} already exists. Abort chunk spawn.", hex_coord);
+            return Ok(());
+        }
+        hex::rendering::spawn_hex_chunk(
+            &mut commands,
+            hex_config.clone(),
+            hex_coord,
+            color_tint_materials.clone(),
+            existing_coords.clone(),
+            hex_config.chunk_size
+        );
+    }
+    Ok(())
+}

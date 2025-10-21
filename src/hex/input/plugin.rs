@@ -6,6 +6,6 @@ pub struct HexInputPlugin;
 
 impl Plugin for HexInputPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, handlers::spawn_on_click);
+        app.add_systems(Update, handlers::spawn_chunk_on_click);
     }
 }

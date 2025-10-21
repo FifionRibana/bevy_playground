@@ -1,16 +1,18 @@
 use bevy::prelude::*;
-use hexx::HexOrientation;
+use hexx::{HexOrientation, shapes};
 
 use super::atlas::ColorTintMaterials;
 use super::components::{HexTile, HexVisuals};
 use super::config::HexConfig;
+use crate::camera::MainCamera;
 use crate::hex::HexCoord;
 
 pub fn setup_hex_config(mut commands: Commands) {
     let radius = 48.;
     let orientation = HexOrientation::Flat;
     let ratio = Vec2::new(1.0, 0.67);
-    let config = HexConfig::new(radius, orientation, ratio);
+    let chunk_size = 3 as u8;
+    let config = HexConfig::new(radius, orientation, ratio, chunk_size);
     commands.insert_resource(config);
     info!(
         "✓ HexConfig configuré (rayon: {}, orientation: {:?}, ratio: {:?})",
@@ -26,25 +28,70 @@ pub fn spawn_hex_sprites(
 ) {
     let existing_coords: std::collections::HashSet<_> = existing.iter().map(|h| h.coord).collect();
 
-    for q in -3..3 {
-        for r in -3..3 {
-            let hex_coord = HexCoord::new(q, r);
-            if existing_coords.clone().contains(&hex_coord) {
-                continue;
-            }
+    spawn_hex_chunk(
+        &mut commands,
+        hex_config.clone(),
+        HexCoord::new(0, 0),
+        color_tint_materials.clone(),
+        existing_coords.clone(),
+        hex_config.chunk_size,
+    );
 
-            let hex = hex_coord.to_hex();
-            let world_pos = hex_config.layout.hex_to_world_pos(hex);
-            // info!("Spawning hex tile {:?} at: {:?}", hex_coord, world_pos);
+    let hex_coord = HexCoord::new(0, 0);
+    let hex = hex_coord.to_hex();
+    let world_pos = hex_config.layout.hex_to_world_pos(hex);
+    info!("Hex Coord: {:?}", hex_coord);
+    info!("Hex      : {:?}", hex);
+    info!("World pos: {:?}", world_pos);
+    // for q in -3..3 {
+    //     for r in -3..3 {
+    //         let hex_coord = HexCoord::new(q, r);
+    //         if existing_coords.clone().contains(&hex_coord) {
+    //             continue;
+    //         }
 
-            spawn_hex_sprite(
-                &mut commands,
-                hex_coord,
-                world_pos,
-                color_tint_materials.clone(),
-                existing_coords.clone(),
-            );
-        }
+    //         let hex = hex_coord.to_hex();
+    //         let world_pos = hex_config.layout.hex_to_world_pos(hex);
+    //         // info!("Spawning hex tile {:?} at: {:?}", hex_coord, world_pos);
+
+    //         spawn_hex_sprite(
+    //             &mut commands,
+    //             hex_coord,
+    //             world_pos,
+    //             color_tint_materials.clone(),
+    //             existing_coords.clone(),
+    //         );
+    //     }
+    // }
+}
+
+pub fn spawn_hex_chunk(
+    commands: &mut Commands,
+    hex_config: HexConfig,
+    hex_coord: HexCoord,
+    color_tint_materials: ColorTintMaterials,
+    existing_coords: std::collections::HashSet<HexCoord>,
+    chunk_size: u8,
+) {
+    let chunk_hex = hex_coord.to_hex().to_lower_res(chunk_size as u32);
+    let center_hex = chunk_hex.to_higher_res(chunk_size as u32);
+
+    info!("Chunk : {:?}", HexCoord::from_hex(chunk_hex));
+    info!("Spawning chunk at {:?}", HexCoord::from_hex(center_hex));
+
+    let hex_shape = shapes::Hexagon {
+        center: center_hex,
+        radius: chunk_size as u32,
+    };
+
+    for coord in hex_shape.coords() {
+        spawn_hex_sprite(
+            commands,
+            HexCoord::from_hex(coord),
+            hex_config.layout.hex_to_world_pos(coord),
+            color_tint_materials.clone(),
+            existing_coords.clone(),
+        )
     }
 }
 
@@ -85,12 +132,64 @@ pub fn spawn_hex_sprite(
         ));
 }
 
-fn click_handler(click: On<Pointer<Click>>, mut commands: Commands) {
-    if click.button != PointerButton::Secondary {
-        return;
-    }
+fn click_handler(
+    click: On<Pointer<Click>>,
+    mut commands: Commands,
+    camera_query: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
+    hex_config: Res<HexConfig>,
+    existing: Query<(Entity, &HexTile)>,
+) {
+    if click.button == PointerButton::Primary {
+        let click_position = click.pointer_location.position;
+        info!("Clicked at: {}", click_position);
+        let Ok((camera, camera_transform)) = camera_query.single() else {
+            return;
+        };
+        if let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, click_position) {
+            let clicked_hex = hex_config.layout.world_pos_to_hex(world_pos);
+            let clicked_hex_coord = HexCoord::from_hex(clicked_hex);
+            let lower_res_hex = clicked_hex.to_lower_res(hex_config.chunk_size as u32);
+            let lower_res_hex_coord = HexCoord::from_hex(lower_res_hex);
 
-    commands.entity(click.event_target()).despawn();
+            let center_hex = lower_res_hex.to_higher_res(hex_config.chunk_size as u32);
+            let center_hex_coord = HexCoord::from_hex(center_hex);
+
+            info!("Clicked hex: {:?}", clicked_hex_coord);
+            info!("   > lower res: {:?}", lower_res_hex_coord);
+            info!("   > center   : {:?}", center_hex_coord);
+        }
+    } else if click.button == PointerButton::Secondary {
+        // commands.entity(click.event_target()).despawn();
+        let Ok((camera, camera_transform)) = camera_query.single() else {
+            return;
+        };
+
+        let click_position = click.pointer_location.position;
+        if let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, click_position) {
+            let clicked_hex = hex_config.layout.world_pos_to_hex(world_pos);
+            let chunk_hex = clicked_hex.to_lower_res(hex_config.chunk_size as u32);
+            let center_hex = chunk_hex.to_higher_res(hex_config.chunk_size as u32);
+
+            info!("Despawn chunk: {:?}", HexCoord::from_hex(chunk_hex));
+
+            let hex_shape = shapes::Hexagon {
+                center: center_hex,
+                radius: hex_config.chunk_size as u32,
+            };
+
+            let shape_coords: std::collections::HashSet<_> = hex_shape.coords().collect();
+
+            let entities: Vec<Entity> = existing
+                .iter()
+                .filter(|(_, hex_tile)| shape_coords.contains(&hex_tile.coord.to_hex()))
+                .map(|(entity, _)| entity)
+                .collect();
+
+            for entity in entities {
+                commands.entity(entity).despawn();
+            }
+        }
+    }
 }
 
 fn update_material_on<E: EntityEvent>(
