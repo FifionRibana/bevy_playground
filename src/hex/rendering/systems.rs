@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use bevy::prelude::*;
 use hexx::{HexOrientation, shapes};
 
@@ -6,18 +8,59 @@ use super::components::{HexTile, HexVisuals};
 use super::config::HexConfig;
 use crate::camera::MainCamera;
 use crate::hex::HexCoord;
+use crate::shared::types::ChunkId;
+use crate::state::cache::WorldCache;
 
 pub fn setup_hex_config(mut commands: Commands) {
     let radius = 48.;
     let orientation = HexOrientation::Flat;
     let ratio = Vec2::new(1.0, 0.67);
-    let chunk_size = 3 as u8;
+    let chunk_size = 10 as u8;
     let config = HexConfig::new(radius, orientation, ratio, chunk_size);
     commands.insert_resource(config);
     info!(
         "✓ HexConfig configuré (rayon: {}, orientation: {:?}, ratio: {:?})",
         radius, orientation, ratio
     );
+}
+
+pub fn render_visible_chunks(
+    mut commands: Commands,
+    hex_config: Res<HexConfig>,
+    world_cache: ResMut<WorldCache>,
+    color_tint_materials: Res<ColorTintMaterials>,
+    existing: Query<&HexTile>,
+) {
+    let existing_coords: std::collections::HashSet<_> = existing.iter().map(|h| h.coord).collect();
+
+    for chunk_id in &world_cache.chunks {
+        spawn_chunk(
+            &mut commands,
+            &chunk_id,
+            &hex_config,
+            &color_tint_materials,
+            existing_coords.clone(),
+        );
+    }
+}
+
+pub fn unload_distant_chunks(
+    mut commands: Commands,
+    mut world_cache: ResMut<WorldCache>,
+    tile_entities: Query<(Entity, &HexTile)>,
+) {
+    let entities: HashSet<_> = tile_entities.iter().map(|(e, h)| (e, h.coord)).collect();
+
+    let mut unloaded_chunks = Vec::new();
+    for chunk_id in world_cache.unload_chunks_request.clone() {
+        despawn_chunk(&mut commands, &chunk_id, entities.clone());
+
+        unloaded_chunks.push(chunk_id);
+    }
+
+    for chunk_id in unloaded_chunks {
+        world_cache.unload_chunk(chunk_id.clone());
+    }
 }
 
 pub fn spawn_hex_sprites(
@@ -63,6 +106,56 @@ pub fn spawn_hex_sprites(
     //         );
     //     }
     // }
+}
+
+pub fn spawn_chunk(
+    commands: &mut Commands,
+    chunk_id: &ChunkId,
+    hex_config: &HexConfig,
+    color_tint_materials: &ColorTintMaterials,
+    existing_coords: std::collections::HashSet<HexCoord>,
+) {
+    let center_hex = chunk_id.coord.to_hex().to_higher_res(chunk_id.size as u32);
+
+    let hex_shape = shapes::Hexagon {
+        center: center_hex,
+        radius: chunk_id.size as u32,
+    };
+
+    for coord in hex_shape.coords() {
+        spawn_hex_sprite(
+            commands,
+            HexCoord::from_hex(coord),
+            hex_config.layout.hex_to_world_pos(coord),
+            color_tint_materials.clone(),
+            existing_coords.clone(),
+        )
+    }
+}
+
+pub fn despawn_chunk(
+    commands: &mut Commands,
+    chunk_id: &ChunkId,
+    entities: std::collections::HashSet<(Entity, HexCoord)>,
+) {
+    let center_hex = chunk_id.coord.to_hex().to_higher_res(chunk_id.size as u32);
+
+    let hex_shape = shapes::Hexagon {
+        center: center_hex,
+        radius: chunk_id.size as u32,
+    };
+
+    let shape_coords: std::collections::HashSet<_> = hex_shape.coords().collect();
+
+    let chunk_entities: Vec<Entity> = entities
+        .iter()
+        .filter(|(_, hex_coord)| shape_coords.contains(&hex_coord.to_hex()))
+        .map(|(entity, _)| *entity)
+        .collect();
+
+    for entity in chunk_entities {
+        commands.entity(entity).despawn();
+    }
 }
 
 pub fn spawn_hex_chunk(
@@ -120,6 +213,7 @@ pub fn spawn_hex_sprite(
             Mesh2d(color_tint_materials.hex_mesh.clone()),
             MeshMaterial2d(material.clone()),
             Transform::from_translation(world_pos.extend(0.0)),
+            Visibility::Inherited,
         ))
         .observe(update_material_on::<Pointer<Over>>(hover_material.clone()))
         .observe(update_material_on::<Pointer<Out>>(material.clone()))

@@ -48,8 +48,24 @@ impl HexCoord {
             .collect()
     }
 
+    pub fn range(&self, radius: u32) -> Vec<HexCoord> {
+        self.to_hex().range(radius).map(HexCoord::from_hex).collect()
+
+    }
+
     /// Retourne un anneau d'hexagones à une distance donnée
     pub fn ring(&self, radius: u32) -> Vec<HexCoord> {
         self.to_hex().ring(radius).map(HexCoord::from_hex).collect()
+    }
+
+    /// Retourne un anneau d'hexagones à une distance donnée
+    pub fn rings(&self, range: impl Iterator<Item = u32>) -> Vec<HexCoord> {
+        self.to_hex().rings(range).into_iter().flatten().map(HexCoord::from_hex).collect()
+    }
+    
+    /// Retourne un anneau d'hexagones à une distance donnée
+    pub fn spiral(&self, range: impl Iterator<Item = u32>) -> Vec<HexCoord> {
+        
+        self.to_hex().rings(range).into_iter().flatten().map(HexCoord::from_hex).collect()
     }
 }

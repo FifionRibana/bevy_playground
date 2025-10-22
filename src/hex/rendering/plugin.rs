@@ -9,12 +9,14 @@ impl Plugin for HexRenderingPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Startup,
+            (systems::setup_hex_config, atlas::systems::setup_materials).chain(),
+        )
+        .add_systems(
+            Update,
             (
-                systems::setup_hex_config,
-                atlas::systems::setup_materials,
-                systems::spawn_hex_sprites,
-            )
-                .chain(),
+                systems::render_visible_chunks,
+                systems::unload_distant_chunks,
+            ).chain(),
         );
     }
 }
