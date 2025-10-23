@@ -1,6 +1,7 @@
 pub mod atlas;
 pub mod components;
 pub mod config;
+pub mod contour;
 pub mod mesh;
 pub mod plugin;
 pub mod systems;
