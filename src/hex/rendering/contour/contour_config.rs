@@ -1,4 +1,5 @@
 // Configuration du système de contours
+#[derive(Clone)]
 pub struct ContourConfig {
     // Échelle : combien de pixels de la binary map par hexagone
     pub pixels_per_hex: f32,

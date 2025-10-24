@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use super::systems;
+use super::super::systems;
 
 pub struct OrganicContourPlugin;
 

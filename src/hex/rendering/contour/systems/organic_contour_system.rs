@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use crate::{
     hex::{
-        HexCoord,
+        HexConfig, HexCoord,
         rendering::contour::{ContourConfig, ContourPath},
     },
     shared::types::{CellData, TerrainType, Triangle, TriangleId},
@@ -22,6 +22,7 @@ pub fn setup_organic_contour(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    hex_config: Res<HexConfig>,
     // images: Res<Assets<Image>>,
     // asset_server: Res<AssetServer>,
 ) {
@@ -34,23 +35,25 @@ pub fn setup_organic_contour(
 
     // Configuration
     let config = ContourConfig {
-        pixels_per_hex: 0.1, // 4 hex par pixel
+        pixels_per_hex: 0.25, // 4 hex par pixel
         noise_amplitude: 0.2, // Force du bruit
         noise_frequency: 3.0, // Fréquence du bruit
         noise_octaves: 8,     // Détail fractal
         threshold: 0.5,       // Seuil terre/mer
-        spline_tension: 0.8,  // Courbure des splines
+        spline_tension: 0.5,  // Courbure des splines
     };
 
     // Créer le système
-    let layout = HexLayout::flat().with_hex_size(48.0);
+    let layout = hex_config.layout.clone();
     let mut system = OrganicContourSystem::new(binary_map, layout, config);
 
     // Initialiser la grille
     system.initialize_hex_grid(100);
 
     // Générer les contours
-    let contours = system.generate_organic_contours();
+    let contours = system.generate_organic_contours_global();
+    // let contours = system.generate_organic_contours();
+    info!("Generated {} contours", contours.len());
 
     // Créer le mesh
     let mesh = system.generate_mesh(&contours);
@@ -186,9 +189,87 @@ impl OrganicContourSystem {
         }
     }
 
+    // Méthode alternative : générer des contours globaux avec marching squares
+    pub fn generate_organic_contours_global(&self) -> Vec<ContourPath> {
+        // Créer une grille régulière pour l'échantillonnage
+        let grid_size = 2000; // Résolution de la grille d'échantillonnage
+        let bounds = self.calculate_bounds();
+        let cell_size = Vec2::new(
+            (bounds.1.x - bounds.0.x) / grid_size as f32,
+            (bounds.1.y - bounds.0.y) / grid_size as f32,
+        );
+
+        // Échantillonner la binary map + bruit sur une grille régulière
+        let mut grid_values = vec![vec![0.0; grid_size + 1]; grid_size + 1];
+
+        for y in 0..=grid_size {
+            for x in 0..=grid_size {
+                let world_pos = Vec2::new(
+                    bounds.0.x + x as f32 * cell_size.x,
+                    bounds.0.y + y as f32 * cell_size.y,
+                );
+
+                // Échantillonner la binary map avec bruit fractal
+                let img_x = (world_pos.x * self.config.pixels_per_hex
+                    + self.binary_map.width() as f32 / 2.0);
+                let img_y = (world_pos.y * self.config.pixels_per_hex
+                    + self.binary_map.height() as f32 / 2.0);
+
+                let base_value = self.sample_at_position(img_x, img_y);
+                let noise =
+                    self.fractal_noise(world_pos.x, world_pos.y) * self.config.noise_amplitude;
+
+                grid_values[y][x] = base_value + noise;
+            }
+        }
+
+        // Appliquer marching squares
+        let mut contours = Vec::new();
+
+        for y in 0..grid_size {
+            for x in 0..grid_size {
+                let corners = [
+                    grid_values[y][x],
+                    grid_values[y][x + 1],
+                    grid_values[y + 1][x + 1],
+                    grid_values[y + 1][x],
+                ];
+
+                if let Some(segments) =
+                    self.marching_square_cell(x, y, &corners, cell_size, bounds.0)
+                {
+                    for segment in segments {
+                        contours.push(ContourPath {
+                            points: vec![segment.0, segment.1],
+                            is_closed: false,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Connecter et lisser les contours
+        let connected = self.connect_segments_to_contours(
+            contours
+                .into_iter()
+                .flat_map(|c| {
+                    c.points
+                        .windows(2)
+                        .map(|w| (w[0], w[1]))
+                        .collect::<Vec<_>>()
+                })
+                .collect(),
+        );
+
+        connected
+            .into_iter()
+            .map(|c| self.smooth_contour_with_splines(c))
+            .collect()
+    }
+
     // Génère les contours organiques en utilisant la grille duale triangulaire
     pub fn generate_organic_contours(&self) -> Vec<ContourPath> {
-        let mut contours = Vec::new();
+        let mut segments = Vec::new();
         let mut visited = HashMap::new();
 
         // Pour chaque cellule frontière, générer un contour
@@ -207,17 +288,183 @@ impl OrganicContourSystem {
 
                 // Générer le contour pour ce triangle
                 if let Some(contour) = self.generate_triangle_contour(&triangle) {
-                    contours.push(contour);
+                    segments.extend(contour.points.windows(2).map(|w| (w[0], w[1])));
                     visited.insert(triangle.id, true);
                 }
             }
         }
+
+        // Connecter les segments pour former des contours fermés
+        let contours = self.connect_segments_to_contours(segments);
 
         // Lisser les contours avec des splines
         contours
             .into_iter()
             .map(|c| self.smooth_contour_with_splines(c))
             .collect()
+    }
+
+    // Calcule les limites de la carte
+    fn calculate_bounds(&self) -> (Vec2, Vec2) {
+        let mut min = Vec2::new(f32::MAX, f32::MAX);
+        let mut max = Vec2::new(f32::MIN, f32::MIN);
+
+        for hex in self.hex_cells.keys() {
+            let pos = self.hex_layout.hex_to_world_pos(*hex);
+            let size = self.hex_layout.scale;
+            min = min.min(pos - size);
+            max = max.max(pos + size);
+        }
+
+        (min, max)
+    }
+
+    // Marching squares pour une cellule
+    fn marching_square_cell(
+        &self,
+        x: usize,
+        y: usize,
+        corners: &[f32; 4],
+        cell_size: Vec2,
+        offset: Vec2,
+    ) -> Option<Vec<(Vec2, Vec2)>> {
+        let threshold = self.config.threshold;
+
+        // Classification de la cellule
+        let case = (if corners[0] > threshold { 1 } else { 0 })
+            | (if corners[1] > threshold { 2 } else { 0 })
+            | (if corners[2] > threshold { 4 } else { 0 })
+            | (if corners[3] > threshold { 8 } else { 0 });
+
+        let base = offset + Vec2::new(x as f32 * cell_size.x, y as f32 * cell_size.y);
+
+        let mut segments = Vec::new();
+
+        // Positions des points interpolés sur les edges
+        let interp = |v1: f32, v2: f32| (threshold - v1) / (v2 - v1);
+
+        match case {
+            0 | 15 => return None,
+            1 | 14 => {
+                let a = base + Vec2::new(0.0, cell_size.y * interp(corners[0], corners[3]));
+                let b = base + Vec2::new(cell_size.x * interp(corners[0], corners[1]), 0.0);
+                segments.push((a, b));
+            }
+            2 | 13 => {
+                let a = base + Vec2::new(cell_size.x * interp(corners[0], corners[1]), 0.0);
+                let b = base + Vec2::new(cell_size.x, cell_size.y * interp(corners[1], corners[2]));
+                segments.push((a, b));
+            }
+            3 | 12 => {
+                let a = base + Vec2::new(0.0, cell_size.y * interp(corners[0], corners[3]));
+                let b = base + Vec2::new(cell_size.x, cell_size.y * interp(corners[1], corners[2]));
+                segments.push((a, b));
+            }
+            4 | 11 => {
+                let a = base + Vec2::new(cell_size.x, cell_size.y * interp(corners[1], corners[2]));
+                let b = base + Vec2::new(cell_size.x * interp(corners[3], corners[2]), cell_size.y);
+                segments.push((a, b));
+            }
+            5 => {
+                // Cas ambigü - choisir une diagonale
+                let a = base + Vec2::new(0.0, cell_size.y * interp(corners[0], corners[3]));
+                let b = base + Vec2::new(cell_size.x * interp(corners[0], corners[1]), 0.0);
+                segments.push((a, b));
+                let c = base + Vec2::new(cell_size.x, cell_size.y * interp(corners[1], corners[2]));
+                let d = base + Vec2::new(cell_size.x * interp(corners[3], corners[2]), cell_size.y);
+                segments.push((c, d));
+            }
+            6 | 9 => {
+                let a = base + Vec2::new(cell_size.x * interp(corners[0], corners[1]), 0.0);
+                let b = base + Vec2::new(cell_size.x * interp(corners[3], corners[2]), cell_size.y);
+                segments.push((a, b));
+            }
+            7 | 8 => {
+                let a = base + Vec2::new(0.0, cell_size.y * interp(corners[0], corners[3]));
+                let b = base + Vec2::new(cell_size.x * interp(corners[3], corners[2]), cell_size.y);
+                segments.push((a, b));
+            }
+            10 => {
+                // Autre cas ambigü
+                let a = base + Vec2::new(cell_size.x * interp(corners[0], corners[1]), 0.0);
+                let b = base + Vec2::new(cell_size.x, cell_size.y * interp(corners[1], corners[2]));
+                segments.push((a, b));
+                let c = base + Vec2::new(0.0, cell_size.y * interp(corners[0], corners[3]));
+                let d = base + Vec2::new(cell_size.x * interp(corners[3], corners[2]), cell_size.y);
+                segments.push((c, d));
+            }
+            _ => {}
+        }
+
+        if segments.is_empty() {
+            None
+        } else {
+            Some(segments)
+        }
+    }
+
+    // Connecte les segments individuels en contours fermés
+    fn connect_segments_to_contours(&self, segments: Vec<(Vec2, Vec2)>) -> Vec<ContourPath> {
+        let mut contours = Vec::new();
+        let mut used = vec![false; segments.len()];
+        let epsilon = 0.001; // Tolérance pour connecter les points
+
+        for start_idx in 0..segments.len() {
+            if used[start_idx] {
+                continue;
+            }
+
+            let mut path = vec![segments[start_idx].0, segments[start_idx].1];
+            used[start_idx] = true;
+
+            // Essayer de connecter d'autres segments
+            loop {
+                let last_point = *path.last().unwrap();
+                let mut found = false;
+
+                for (idx, segment) in segments.iter().enumerate() {
+                    if used[idx] {
+                        continue;
+                    }
+
+                    // Vérifier si ce segment se connecte
+                    if (segment.0 - last_point).length() < epsilon {
+                        path.push(segment.1);
+                        used[idx] = true;
+                        found = true;
+                        break;
+                    } else if (segment.1 - last_point).length() < epsilon {
+                        path.push(segment.0);
+                        used[idx] = true;
+                        found = true;
+                        break;
+                    }
+                }
+
+                if !found {
+                    break;
+                }
+
+                // Vérifier si on a fermé le contour
+                if path.len() > 3 && (path[0] - last_point).length() < epsilon {
+                    contours.push(ContourPath {
+                        points: path[..path.len() - 1].to_vec(), // Enlever le dernier point dupliqué
+                        is_closed: true,
+                    });
+                    break;
+                }
+            }
+
+            // Si le contour n'est pas fermé mais a une longueur suffisante
+            if path.len() > 2 && !contours.last().map_or(false, |c| c.is_closed) {
+                contours.push(ContourPath {
+                    points: path,
+                    is_closed: false,
+                });
+            }
+        }
+
+        contours
     }
 
     // Convertit un hexagone en triangles de la grille duale
@@ -318,7 +565,6 @@ impl OrganicContourSystem {
         // let pixel_index = (y * self.binary_map.width() + x) as usize * 4;
         let pixel = self.binary_map.get_pixel(x, y);
         pixel[0] as f32 / 255.0
-        
     }
 
     // Algorithme marching triangles
@@ -514,35 +760,222 @@ impl OrganicContourSystem {
         let mut normals = Vec::new();
         let mut uvs = Vec::new();
 
-        // Pour chaque contour, créer une bande de polygones
+        // Générer un mesh plein pour toutes les cellules de terre
+        // Trianguler chaque contour fermé (îles de terre)
         for contour in contours {
+            if contour.points.len() < 3 {
+                continue;
+            }
+
+            // Utiliser ear clipping pour trianguler le polygone
+            self.triangulate_polygon(
+                &contour.points,
+                &mut vertices,
+                &mut indices,
+                &mut normals,
+                &mut uvs,
+            );
+        }
+
+        Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::RENDER_WORLD,
+        )
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vertices)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+        .with_inserted_indices(Indices::U16(indices))
+    }
+
+    // Triangulation par ear clipping pour les polygones organiques
+    fn triangulate_polygon(
+        &self,
+        points: &[Vec2],
+        vertices: &mut Vec<[f32; 3]>,
+        indices: &mut Vec<u16>,
+        normals: &mut Vec<[f32; 3]>,
+        uvs: &mut Vec<[f32; 2]>,
+    ) {
+        if points.len() < 3 {
+            return;
+        }
+
+        let base_index = vertices.len() as u16;
+
+        // Calculer le centre et les bounds pour les UVs
+        let mut center = Vec2::ZERO;
+        let mut min = points[0];
+        let mut max = points[0];
+
+        for point in points {
+            center += *point;
+            min = min.min(*point);
+            max = max.max(*point);
+        }
+        center /= points.len() as f32;
+        let size = max - min;
+
+        // Ajouter tous les vertices du contour
+        for point in points {
+            vertices.push([point.x, point.y, 0.0]);
+            normals.push([0.0, 0.0, 1.0]);
+
+            // UVs basées sur la position relative
+            let uv = (*point - min) / size;
+            uvs.push([uv.x, uv.y]);
+        }
+
+        // Ear clipping simplifié
+        let mut remaining: Vec<usize> = (0..points.len()).collect();
+
+        while remaining.len() > 3 {
+            let mut ear_found = false;
+
+            for i in 0..remaining.len() {
+                let prev = remaining[(i + remaining.len() - 1) % remaining.len()];
+                let curr = remaining[i];
+                let next = remaining[(i + 1) % remaining.len()];
+
+                if self.is_ear(&points, prev, curr, next, &remaining) {
+                    // Créer le triangle
+                    indices.push(base_index + prev as u16);
+                    indices.push(base_index + curr as u16);
+                    indices.push(base_index + next as u16);
+
+                    // Retirer le sommet du milieu
+                    remaining.remove(i);
+                    ear_found = true;
+                    break;
+                }
+            }
+
+            // Sécurité: si aucune oreille n'est trouvée, forcer la triangulation
+            if !ear_found && remaining.len() > 3 {
+                indices.push(base_index + remaining[0] as u16);
+                indices.push(base_index + remaining[1] as u16);
+                indices.push(base_index + remaining[2] as u16);
+                remaining.remove(1);
+            }
+        }
+
+        // Ajouter le dernier triangle
+        if remaining.len() == 3 {
+            indices.push(base_index + remaining[0] as u16);
+            indices.push(base_index + remaining[1] as u16);
+            indices.push(base_index + remaining[2] as u16);
+        }
+    }
+
+    // Vérifie si un triangle forme une "oreille" valide
+    fn is_ear(
+        &self,
+        points: &[Vec2],
+        prev: usize,
+        curr: usize,
+        next: usize,
+        remaining: &[usize],
+    ) -> bool {
+        let p1 = points[prev];
+        let p2 = points[curr];
+        let p3 = points[next];
+
+        // Vérifier que le triangle est orienté correctement (CCW)
+        let area = (p2.x - p1.x) * (p3.y - p1.y) - (p3.x - p1.x) * (p2.y - p1.y);
+        if area <= 0.0 {
+            return false;
+        }
+
+        // Vérifier qu'aucun autre point n'est à l'intérieur du triangle
+        for &idx in remaining {
+            if idx == prev || idx == curr || idx == next {
+                continue;
+            }
+
+            if self.point_in_triangle(points[idx], p1, p2, p3) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    // Test si un point est à l'intérieur d'un triangle
+    fn point_in_triangle(&self, p: Vec2, a: Vec2, b: Vec2, c: Vec2) -> bool {
+        let v0 = c - a;
+        let v1 = b - a;
+        let v2 = p - a;
+
+        let dot00 = v0.dot(v0);
+        let dot01 = v0.dot(v1);
+        let dot02 = v0.dot(v2);
+        let dot11 = v1.dot(v1);
+        let dot12 = v1.dot(v2);
+
+        let inv_denom = 1.0 / (dot00 * dot11 - dot01 * dot01);
+        let u = (dot11 * dot02 - dot01 * dot12) * inv_denom;
+        let v = (dot00 * dot12 - dot01 * dot02) * inv_denom;
+
+        (u >= 0.0) && (v >= 0.0) && (u + v <= 1.0)
+    }
+
+    // Ajoute une bordure visible pour les contours (optionnel)
+    fn add_contour_overlay(
+        &self,
+        vertices: &mut Vec<[f32; 3]>,
+        indices: &mut Vec<u16>,
+        normals: &mut Vec<[f32; 3]>,
+        uvs: &mut Vec<[f32; 2]>,
+        contours: &[ContourPath],
+    ) {
+        let elevation = 0.01; // Légèrement au-dessus pour éviter z-fighting
+        let thickness = 0.05; // Épaisseur de la bordure
+
+        for contour in contours {
+            if contour.points.len() < 2 {
+                continue;
+            }
+
             let base_index = vertices.len() as u16;
 
-            // Créer une bande avec épaisseur
-            let thickness = 0.1; // Ajuster selon besoin
-
             for (i, point) in contour.points.iter().enumerate() {
-                let next = contour.points[(i + 1) % contour.points.len()];
+                let next = if i < contour.points.len() - 1 {
+                    contour.points[i + 1]
+                } else if contour.is_closed {
+                    contour.points[0]
+                } else {
+                    continue;
+                };
+
                 let direction = (next - *point).normalize();
                 let perpendicular = Vec2::new(-direction.y, direction.x) * thickness;
 
-                // Ajouter deux vertices pour créer une bande
-                vertices.push([point.x - perpendicular.x, point.y - perpendicular.y, 0.0]);
-                vertices.push([point.x + perpendicular.x, point.y + perpendicular.y, 0.0]);
+                // Quatre vertices pour un segment de ligne épais
+                vertices.push([
+                    point.x - perpendicular.x,
+                    point.y - perpendicular.y,
+                    elevation,
+                ]);
+                vertices.push([
+                    point.x + perpendicular.x,
+                    point.y + perpendicular.y,
+                    elevation,
+                ]);
 
                 normals.push([0.0, 0.0, 1.0]);
                 normals.push([0.0, 0.0, 1.0]);
 
-                uvs.push([i as f32 / contour.points.len() as f32, 0.0]);
-                uvs.push([i as f32 / contour.points.len() as f32, 1.0]);
+                let t = i as f32 / contour.points.len() as f32;
+                uvs.push([t, 0.0]);
+                uvs.push([t, 1.0]);
 
-                // Créer les triangles
+                // Créer les triangles si on a au moins 4 vertices
                 if i > 0 {
                     let idx = base_index + (i * 2) as u16;
+                    // Premier triangle
                     indices.push(idx - 2);
                     indices.push(idx - 1);
                     indices.push(idx);
-
+                    // Second triangle
                     indices.push(idx - 1);
                     indices.push(idx + 1);
                     indices.push(idx);
@@ -561,14 +994,5 @@ impl OrganicContourSystem {
                 indices.push(base_index);
             }
         }
-
-        Mesh::new(
-            PrimitiveTopology::TriangleList,
-            RenderAssetUsages::RENDER_WORLD,
-        )
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vertices)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-        .with_inserted_indices(Indices::U16(indices))
     }
 }

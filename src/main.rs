@@ -54,10 +54,10 @@ fn main() {
         .add_plugins((
             camera::CameraPlugin,
             // state::StatePlugin,
-            // hex::rendering::HexRenderingPlugin,
-            hex::rendering::contour::OrganicContourPlugin,
+            hex::rendering::HexRenderingPlugin,
+            // hex::rendering::contour::OrganicContourPlugin,
             // hex::input::HexInputPlugin,
-            // ui::UiPlugin,
+            ui::UiPlugin,
         ))
         .add_plugins((
             // LogDiagnosticsPlugin::default(),
